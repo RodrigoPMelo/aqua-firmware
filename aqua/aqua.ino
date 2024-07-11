@@ -64,6 +64,9 @@ void IRAM_ATTR onButtonPress() {
 unsigned long lastMillis;
 const size_t valuesLength = 2;
 
+// Initialize variable to start sending data
+bool canSendData = false;
+
 void setup() {
   Serial.begin(115200);
   // Initialize LCD
@@ -79,7 +82,7 @@ void setup() {
   Serial.println("Little FS Mounted Successfully");
   verifyFile("/wifidata.txt");
   if (connectToWifi()) {
-    start = true; // habilitates the sending of data over mqtt
+    canSendData = true; // habilitates the sending of data over mqtt
 
   } else {
     //Create a Access Point
@@ -119,7 +122,6 @@ void setup() {
 int ciclo = 0;
 int alterna = 0;
 bool flipflop = false;
-bool start = false;
 
 void loop() {
   ciclo++;
@@ -167,7 +169,7 @@ void loop() {
     }
 
     // Run every x seconds
-    if (start) {
+    if (canSendData) {
       if (millis() - lastMillis >= 1 * 1000UL) {
         lastMillis = millis();  //get ready for the next iteration
       }
