@@ -7,6 +7,7 @@
 #include <WebServer.h>
 #include "FS.h"
 #include <LittleFS.h>
+#include <Arduino.h>
 
 #define FORMAT_LITTLEFS_IF_FAILED true
 
