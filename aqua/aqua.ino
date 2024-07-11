@@ -1,4 +1,3 @@
-#include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -6,7 +5,6 @@
 #include <DS1302.h>
 #include <WiFi.h>
 #include <WebServer.h>
-#include <Arduino.h>
 #include "FS.h"
 #include <LittleFS.h>
 
