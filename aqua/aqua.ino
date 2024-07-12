@@ -2,15 +2,14 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <Stepper.h>
-#include <DS1302.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include "FS.h"
 #include <LittleFS.h>
 #include <Arduino.h>
+#include <DS1302.h>
 
 #define FORMAT_LITTLEFS_IF_FAILED true
-
 
 // Access Point credentials
 const char *ap_ssid = "Aqua Access Point";
@@ -60,7 +59,7 @@ void IRAM_ATTR onButtonPress() {
 }
 
 // Initialize variables for period tracking
-unsigned long lastMillis;
+unsigned long lastMillis = 0;
 const size_t valuesLength = 2;
 
 // Initialize variable to start sending data
@@ -109,7 +108,6 @@ void setup() {
 
   // Initialize stepper motor
   myStepper.setSpeed(50);  // set the speed to 50 RPM
-
 
   // Initialize button
   pinMode(buttonPin, INPUT_PULLUP);
@@ -340,6 +338,6 @@ bool connectToWifi() {
   }
 }
 
-void sendSensorsData(){
-
+void sendSensorsData() {
+  // Your implementation for sending sensor data
 }
