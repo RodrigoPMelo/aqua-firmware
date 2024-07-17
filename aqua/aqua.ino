@@ -29,7 +29,7 @@ const int DAT = 26;
 const int RST = 27;
 
 // DS18B20 Sensor
-const int oneWireBus = 15; // GPIO pin where the DS18B20 is connected
+const int oneWireBus = 13; // GPIO pin where the DS18B20 is connected
 OneWire oneWire(oneWireBus);
 DallasTemperature sensors(&oneWire);
 
@@ -47,16 +47,6 @@ LiquidCrystal_I2C lcd(0x27, 16, 2); // Adjust the I2C address if needed
 // Define o relogio
 DS1302 rtc(RST, DAT, CLK);
 int horaAtual, minutoAtual;
-
-// Boot button
-const int buttonPin = 0; // GPIO0 is the boot button
-volatile bool motorState = false;
-
-// ISR for button press
-void IRAM_ATTR onButtonPress()
-{
-  motorState = false;
-}
 
 // Initialize variables for period tracking
 unsigned long lastMillis = 0;
@@ -80,7 +70,7 @@ void setup()
     return;
   }
   Serial.println("Little FS Mounted Successfully");
-  verifyFile("/wifidata.txt");
+  // verifyFile("/wifidata.txt");
   if (connectToWifi())
   {
     canSendData = true; // habilitates the sending of data over mqtt
@@ -91,11 +81,13 @@ void setup()
     WiFi.softAP(ap_ssid);
     Serial.print("Access Point \"");
     Serial.print(ap_ssid);
-    Serial.println("\" started");
+    Serial.println("\" started with IP: ");
+    Serial.print(WiFi.softAPIP());
 
     // Start the socket server
     server.begin();
     Serial.println("Socket server started");
+    
   }
 
   // Config the RTC clock
@@ -109,9 +101,6 @@ void setup()
   // Initialize stepper motor
   myStepper.setSpeed(50); // set the speed to 50 RPM
 
-  // Initialize button
-  pinMode(buttonPin, INPUT_PULLUP);
-  attachInterrupt(buttonPin, onButtonPress, FALLING);
 
   lcd.clear();
 }
@@ -150,16 +139,14 @@ void loop()
       {
       }
 
-      // Control stepper motor
-      if (motorState)
-      {
-        motorState = false; // Reset flag
-        alimentarPeixe(stepsPerRevolution);
-      }
-      // horarioNaTela();
+     
+        //alimentarPeixe(stepsPerRevolution);
+      
     }
     else
     {
+      //displayTimeOnScreen();
+      
       lcd.clear();
       lcd.setCursor(0, 0);
       lcd.print("Turbidez: ");
@@ -169,19 +156,17 @@ void loop()
       lcd.print(temperatureC);
       lcd.print(" C");
 
-      // Handle client requests
-      if (WiFi.status() == WL_CONNECTED)
+      // Run every x seconds
+      if (canSendData)
+      {
+        if (millis() - lastMillis >= 1 * 1000UL)
+        {
+          lastMillis = millis(); // get ready for the next iteration
+        }
+      }
+      else
       {
         handleSocketClient();
-      }
-    }
-
-    // Run every x seconds
-    if (canSendData)
-    {
-      if (millis() - lastMillis >= 1 * 1000UL)
-      {
-        lastMillis = millis(); // get ready for the next iteration
       }
     }
   }
@@ -208,18 +193,18 @@ void alimentarPeixe(int steps)
 }
 
 // Print the current time
-void horarioNaTela()
+void displayTimeOnScreen()
 {
-  // Obtem a hora atual a partir do RTC
+  // Gets the current time from the RTC
   Time t = rtc.time();
-  // Transforma os valores do horario em informacao unificada para o LCD
-  char horaRelogioStr[10];
-  //%02d indica que o programa colocara, nos numeros menores que 10, um zero a esquerda para manter o padrao de exibicao (ex: 09 e nao 9)
-  sprintf(horaRelogioStr, "Hora: %02d:%02d:%02d", t.hr, t.min, t.sec);
-  // Imprime no LCD
+  // Transforms the time values into a unified string for the LCD
+  char timeString[20]; // Increased size to accommodate the entire string
+  // %02d indicates that the program will place a leading zero for numbers less than 10 to maintain the display format (e.g., 09 instead of 9)
+  sprintf(timeString, "Time: %02d:%02d:%02d", t.hr, t.min, t.sec);
+  // Prints on the LCD
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(horaRelogioStr);
+  lcd.print(timeString);
 }
 
 void handleSocketClient()
