@@ -7,6 +7,7 @@
 #include <LittleFS.h>
 #include <Arduino.h>
 #include <DS1302.h>
+#include "mqtt_client.h"
 
 #define FORMAT_LITTLEFS_IF_FAILED true
 
@@ -16,6 +17,15 @@ const char *ap_ssid = "Aqua Access Point";
 // Wifi credentials
 String ssid = "";
 String password = "";
+
+// Device Id
+String uuid = "";
+
+// MQTT config
+const char *mqtt_server = "mqtt://test.mosquitto.org";
+const int mqtt_port = 1883;
+char topic[128];
+esp_mqtt_client_handle_t mqtt_client;
 
 // Socket server
 WiFiServer server(80);
@@ -70,7 +80,7 @@ void setup()
     return;
   }
   Serial.println("Little FS Mounted Successfully");
-  // verifyFile("/wifidata.txt");
+  verifyFile("/data.txt");
   if (connectToWifi())
   {
     canSendData = true; // habilitates the sending of data over mqtt
@@ -82,12 +92,11 @@ void setup()
     Serial.print("Access Point \"");
     Serial.print(ap_ssid);
     Serial.println("\" started with IP: ");
-    Serial.print(WiFi.softAPIP());
+    Serial.println(WiFi.softAPIP());
 
     // Start the socket server
     server.begin();
     Serial.println("Socket server started");
-    
   }
 
   // Config the RTC clock
@@ -100,7 +109,6 @@ void setup()
 
   // Initialize stepper motor
   myStepper.setSpeed(50); // set the speed to 50 RPM
-
 
   lcd.clear();
 }
@@ -122,7 +130,7 @@ void loop()
     }
 
     // Read turbidity sensor
-    int turbidityValue = analogRead(turbidityPin);
+    float turbidityValue = analogRead(turbidityPin);
     // Read temperature sensor
     sensors.requestTemperatures();
     float temperatureC = sensors.getTempCByIndex(0);
@@ -139,29 +147,28 @@ void loop()
       {
       }
 
-     
-        //alimentarPeixe(stepsPerRevolution);
-      
+      // alimentarPeixe(stepsPerRevolution);
     }
     else
     {
-      //displayTimeOnScreen();
-      
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("Turbidez: ");
-      lcd.print(turbidityValue, 0);
-      lcd.setCursor(0, 1);
-      lcd.print("Temp: ");
-      lcd.print(temperatureC);
-      lcd.print(" C");
+      // displayTimeOnScreen();
 
       // Run every x seconds
       if (canSendData)
       {
-        if (millis() - lastMillis >= 1 * 1000UL)
+        if (millis() - lastMillis >= 1 * 15000UL)
         {
           lastMillis = millis(); // get ready for the next iteration
+          lcd.clear();
+          lcd.setCursor(0, 0);
+          lcd.print("Turbidez: ");
+          lcd.print(turbidityValue, 0);
+          lcd.setCursor(0, 1);
+          lcd.print("Temp: ");
+          lcd.print(temperatureC);
+          lcd.print(" C");
+
+          sendSensorsData(turbidityValue, temperatureC);
         }
       }
       else
@@ -220,16 +227,43 @@ void handleSocketClient()
       {
         String received = client.readStringUntil('\n');
         Serial.print("Received: ");
-        Serial.println(received);
+        processClientMessage(received);
+        if (ssid != "" && password != "" && uuid != "")
+        {
+          char message[256]; // Ensure the buffer is large enough to hold the concatenated string
+          snprintf(message, sizeof(message), "ssid: %s\r\npassword: %s\r\nuuid: %s\r\n", ssid, password, uuid.c_str());
 
-        // Send a response back to the client
-        client.println("Message received: " + received);
+          writeFile(LittleFS, "/data.txt", message);
+          client.println("Valid message received and saved: " + received);
+        }
+        else
+        {
+          client.println("Invalid message received:" + received);
+        }
       }
     }
     client.stop();
     Serial.println("Client Disconnected.");
+    if (connectToWifi())
+    {
+      canSendData = true; // habilitates the sending of data over mqtt
+    }
   }
 }
+void processClientMessage(String message)
+{
+  Serial.println("Received message: " + message);
+
+  int firstSeparator = message.indexOf(',');
+  int secondSeparator = message.indexOf(',', firstSeparator + 1);
+
+  uuid = message.substring(0, firstSeparator);
+  ssid = message.substring(firstSeparator + 1, secondSeparator);
+  password = message.substring(secondSeparator + 1);
+
+  Serial.printf("UUID: %s, SSID: %s, Password: %s\n", uuid.c_str(), ssid.c_str(), password.c_str());
+}
+
 // Overwrite a file or creates it if it dont exists
 void writeFile(fs::FS &fs, const char *path, const char *message)
 {
@@ -251,29 +285,8 @@ void writeFile(fs::FS &fs, const char *path, const char *message)
   }
   file.close();
 }
-// Save data to a file without overwriting
-void appendFile(fs::FS &fs, const char *path, const char *message)
-{
-  Serial.printf("Appending to file: %s\r\n", path);
-
-  File file = fs.open(path, FILE_APPEND);
-  if (!file)
-  {
-    Serial.println("- failed to open file for appending");
-    return;
-  }
-  if (file.print(message))
-  {
-    Serial.println("- message appended");
-  }
-  else
-  {
-    Serial.println("- append failed");
-  }
-  file.close();
-}
 // Read the file and get the wifi credentials
-void readCredentials(fs::FS &fs, const char *path, String &ssid, String &password)
+void readCredentials(fs::FS &fs, const char *path, String &ssid, String &password, String &uuid)
 {
   Serial.printf("Reading file: %s\r\n", path);
 
@@ -301,7 +314,14 @@ void readCredentials(fs::FS &fs, const char *path, String &ssid, String &passwor
       password = line;
       password.trim();
     }
+    else if (line.startsWith("uuid:"))
+    {
+      line.remove(0, 5);
+      uuid = line;
+      uuid.trim();
+    }
   }
+  Serial.printf("read file: %s, %s, %s", ssid, password, uuid.c_str());
   file.close();
 }
 void verifyFile(const char *path)
@@ -317,7 +337,7 @@ void verifyFile(const char *path)
   }
   else
   {
-    readCredentials(LittleFS, path, ssid, password);
+    readCredentials(LittleFS, path, ssid, password, uuid);
   }
 }
 
@@ -327,8 +347,10 @@ bool connectToWifi()
   {
     return false;
   }
+  ssid.trim();
+  password.trim();
+
   // Attempt to connect to the received Wi-Fi credentials
-  Serial.printf("%s, %s", ssid.c_str(), password.c_str());
   WiFi.begin(ssid.c_str(), password.c_str());
 
   int timeout = 10; // 10 seconds timeout
@@ -349,10 +371,8 @@ bool connectToWifi()
     }
     // closes the web server
     server.close();
-
-    char message[128]; // Ensure the buffer is large enough to hold the concatenated string
-    snprintf(message, sizeof(message), "ssid: %s\r\npassword: %s\r\n", ssid, password);
-    writeFile(LittleFS, "/wifidata.txt", message);
+    mqtt_app_start();
+    delay(5000);
     return true;
   }
   else
@@ -362,7 +382,66 @@ bool connectToWifi()
   }
 }
 
-void sendSensorsData()
+void sendSensorsData(float turbidity, float temperatureC)
 {
-  // Your implementation for sending sensor data
+  if (mqtt_client == NULL)
+  {
+    Serial.println("MQTT client not initialized, starting MQTT client...");
+    mqtt_app_start();
+    // Wait until the client is connected
+    int wait_time = 10;
+    while (mqtt_client == NULL && wait_time > 0)
+    {
+      delay(1000); // Delay for 1 second
+      wait_time--;
+    }
+  }
+
+  snprintf(topic, sizeof(topic), "aqua/devices/%s/sensors", uuid.c_str());
+
+  // Debug: Print the topic
+  Serial.printf("MQTT topic: %s\n", topic);
+
+  char sensorData[64];
+  snprintf(sensorData, sizeof(sensorData), "turbidez: %f, temperature: %f", turbidity, temperatureC);
+
+  // Debug: Print the sensor data
+  Serial.printf("Sensor data: %s\n", sensorData);
+
+  int msg_id = esp_mqtt_client_publish(mqtt_client, topic, sensorData, 0, 2, 0);
+  if (msg_id == -1)
+  {
+    Serial.printf("Publish message cannot be created: %s\n", topic);
+  }
+  else
+  {
+    Serial.printf("Message published with msg_id: %d\n", msg_id);
+  }
+}
+
+static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
+  switch (event_id)
+  {
+  case MQTT_EVENT_CONNECTED:
+    Serial.println("MQTT_EVENT_CONNECTED");
+    break;
+  case MQTT_EVENT_DISCONNECTED:
+    Serial.println("MQTT_EVENT_DISCONNECTED");
+    break;
+  default:
+    break;
+  }
+}
+
+void mqtt_app_start(void)
+{
+  esp_mqtt_client_config_t mqtt_cfg = {};
+  mqtt_cfg.broker.address.uri = mqtt_server;
+  mqtt_cfg.broker.address.port = mqtt_port;
+
+  mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
+  esp_mqtt_client_register_event(mqtt_client, MQTT_EVENT_ANY, mqtt_event_handler, NULL);
+  Serial.println("Starting MQTT");
+  esp_mqtt_client_start(mqtt_client);
 }
