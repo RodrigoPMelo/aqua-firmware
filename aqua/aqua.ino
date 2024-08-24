@@ -24,7 +24,7 @@ String uuid = "";
 // MQTT config
 const char *mqtt_server = "mqtt://test.mosquitto.org";
 const int mqtt_port = 1883;
-char topic[128];
+char publish_topic[128], subscribe_topic[128];
 esp_mqtt_client_handle_t mqtt_client;
 
 // Socket server
@@ -64,6 +64,11 @@ const size_t valuesLength = 2;
 
 // Initialize variable to start sending data
 bool canSendData = false;
+
+
+// Initialize variables that store sensors data
+float turbidityValue = 0;
+float temperatureC = 0;
 
 void setup()
 {
@@ -130,10 +135,10 @@ void loop()
     }
 
     // Read turbidity sensor
-    float turbidityValue = analogRead(turbidityPin);
+    turbidityValue = analogRead(turbidityPin);
     // Read temperature sensor
     sensors.requestTemperatures();
-    float temperatureC = sensors.getTempCByIndex(0);
+    temperatureC = sensors.getTempCByIndex(0);
     ciclo = 0;
     // Obtem a hora atual a partir do RTC
     Time t = rtc.time();
@@ -151,11 +156,10 @@ void loop()
     }
     else
     {
-      // displayTimeOnScreen();
-
       // Run every x seconds
       if (canSendData)
       {
+        
         if (millis() - lastMillis >= 1 * 15000UL)
         {
           lastMillis = millis(); // get ready for the next iteration
@@ -167,7 +171,6 @@ void loop()
           lcd.print("Temp: ");
           lcd.print(temperatureC);
           lcd.print(" C");
-
           sendSensorsData(turbidityValue, temperatureC);
         }
       }
@@ -199,20 +202,6 @@ void alimentarPeixe(int steps)
   delay(500);
 }
 
-// Print the current time
-void displayTimeOnScreen()
-{
-  // Gets the current time from the RTC
-  Time t = rtc.time();
-  // Transforms the time values into a unified string for the LCD
-  char timeString[20]; // Increased size to accommodate the entire string
-  // %02d indicates that the program will place a leading zero for numbers less than 10 to maintain the display format (e.g., 09 instead of 9)
-  sprintf(timeString, "Time: %02d:%02d:%02d", t.hr, t.min, t.sec);
-  // Prints on the LCD
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(timeString);
-}
 
 void handleSocketClient()
 {
@@ -384,54 +373,49 @@ bool connectToWifi()
 
 void sendSensorsData(float turbidity, float temperatureC)
 {
-  if (mqtt_client == NULL)
-  {
-    Serial.println("MQTT client not initialized, starting MQTT client...");
-    mqtt_app_start();
-    // Wait until the client is connected
-    int wait_time = 10;
-    while (mqtt_client == NULL && wait_time > 0)
-    {
-      delay(1000); // Delay for 1 second
-      wait_time--;
-    }
-  }
 
-  snprintf(topic, sizeof(topic), "aqua/devices/%s/sensors", uuid.c_str());
-
-  // Debug: Print the topic
-  Serial.printf("MQTT topic: %s\n", topic);
+  snprintf(publish_topic, sizeof(publish_topic), "aqua/devices/%s/sensors", uuid.c_str());
 
   char sensorData[64];
   snprintf(sensorData, sizeof(sensorData), "turbidez: %f, temperature: %f", turbidity, temperatureC);
 
-  // Debug: Print the sensor data
-  Serial.printf("Sensor data: %s\n", sensorData);
+  int msg_id = esp_mqtt_client_publish(mqtt_client, publish_topic, sensorData, 0, 2, 0);
 
-  int msg_id = esp_mqtt_client_publish(mqtt_client, topic, sensorData, 0, 2, 0);
-  if (msg_id == -1)
-  {
-    Serial.printf("Publish message cannot be created: %s\n", topic);
-  }
-  else
-  {
-    Serial.printf("Message published with msg_id: %d\n", msg_id);
-  }
+}
+void processSubscribeData(String data) {
+  Serial.printf("Received data: %s\n", data);
 }
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
-  switch (event_id)
-  {
-  case MQTT_EVENT_CONNECTED:
-    Serial.println("MQTT_EVENT_CONNECTED");
-    break;
-  case MQTT_EVENT_DISCONNECTED:
-    Serial.println("MQTT_EVENT_DISCONNECTED");
-    break;
-  default:
-    break;
-  }
+    esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
+
+    switch (event_id)
+    {
+    case MQTT_EVENT_CONNECTED:
+        Serial.println("MQTT_EVENT_CONNECTED");
+        {
+            String subTopic = "aqua/devices/" + uuid + "/actuators";
+            esp_mqtt_client_subscribe(mqtt_client, subTopic.c_str(), 0);
+        }
+       canSendData = true;
+        break;
+
+    case MQTT_EVENT_DISCONNECTED:
+        Serial.println("MQTT_EVENT_DISCONNECTED");
+         canSendData = false;
+        break;
+
+    case MQTT_EVENT_DATA:
+        Serial.println("MQTT_EVENT_DATA");
+        //Serial.printf("Received topic: %.*s\n", event->topic_len, event->topic);
+        
+        processSubscribeData(event->data);
+        break;
+
+    default:
+        break;
+    }
 }
 
 void mqtt_app_start(void)
@@ -441,7 +425,24 @@ void mqtt_app_start(void)
   mqtt_cfg.broker.address.port = mqtt_port;
 
   mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
-  esp_mqtt_client_register_event(mqtt_client, MQTT_EVENT_ANY, mqtt_event_handler, NULL);
+  esp_mqtt_client_register_event(mqtt_client, MQTT_EVENT_ANY, mqtt_event_handler, mqtt_client);
   Serial.println("Starting MQTT");
   esp_mqtt_client_start(mqtt_client);
 }
+
+void processAlimentationTime(String message, int* h, int* min) {
+  int hyphenIndex = message.indexOf('-');
+  int firstColonIndex = message.indexOf(':');
+
+  // Check if both the hyphen and colons are found
+  if (hyphenIndex != -1 && firstColonIndex != -1) {
+    // Extract hour and minute substrings
+    String hourString = message.substring(hyphenIndex + 1, firstColonIndex);
+    String minuteString = message.substring(firstColonIndex + 1);
+
+    // Convert substrings to integers and assign to pointers
+    *h = hourString.toInt();
+    *min = minuteString.toInt();
+  }
+  
+  
