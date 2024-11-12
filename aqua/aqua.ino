@@ -202,22 +202,22 @@ void verifyFeeding() {
 
 void sendDataMqtt() {
   if (canSendData) {
-    // Atualizar e enviar dados dos sensores a cada 15 min
+    // Atualizar e enviar dados dos sensores a cada 5 segundos
     if (millis() - lastMillis >= 900000UL) {
       lastMillis = millis();
-      turbidityValue = analogRead(turbidityPin);
-      sensors.requestTemperatures();
-      temperatureC = sensors.getTempCByIndex(0);
-      sendSensorsData(turbidityValue, temperatureC);
-    }
-
-    // Enviar dados em tempo real a cada 30 segundos
-    if (millis() - lastMillisRealtime >= 30000UL) {
-      lastMillisRealtime = millis();
       float turbidity = analogRead(turbidityPin);
       sensors.requestTemperatures();
       float temp = sensors.getTempCByIndex(0);
-      sendSensorsDataRealtime(turbidity, temp);
+      sendSensorsData(turbidity, temp);
+    }
+
+    // Enviar dados em tempo real a cada 1 minuto
+    if (millis() - lastMillisRealtime >= 30000UL) {
+      lastMillisRealtime = millis();
+      turbidityValue = analogRead(turbidityPin);
+      sensors.requestTemperatures();
+      temperatureC = sensors.getTempCByIndex(0);
+      sendSensorsDataRealtime(turbidityValue, temperatureC);
     }
   } else {
     handleSocketClient();
@@ -487,7 +487,7 @@ void processSubscribeData(String data) {
     processAlimentationTime(data, &alimHour3, &alimMinute3, 'D');
   } else if (data.startsWith("RESET")) {
     Serial.println("Resetting all stored data...");
-    esp_err_t err = nvs_erase_all(nvs);  
+    esp_err_t err = nvs_erase_all(nvs);
     if (err == ESP_OK) {
       Serial.println("All data erased from NVS");
       ESP.restart();
