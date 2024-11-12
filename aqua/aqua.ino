@@ -22,7 +22,7 @@ String uuid = "";
 // MQTT config
 const char *mqtt_server = "mqtt://test.mosquitto.org";
 const int mqtt_port = 1883;
-char publish_topic[128], subscribe_topic[128];
+char publish_topic[128], subscribe_topic[128], publish_topic_realtime[128];
 esp_mqtt_client_handle_t mqtt_client;
 
 // Socket server
@@ -57,6 +57,7 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);  // Adjust the I2C address if needed
 
 // Define o relogio
 DS1302 rtc(RST, DAT, CLK);
+
 int currentHour, currentMinute;
 
 //Parametros horarios de alimentacao
@@ -67,6 +68,7 @@ int alimHour3, alimMinute3, feeded3;
 
 // Initialize variables for period tracking
 unsigned long lastMillis = 0;
+unsigned long lastMillisRealtime = 0;
 const size_t valuesLength = 2;
 
 // Initialize variable to start sending data
@@ -76,6 +78,13 @@ bool canSendData = false;
 // Initialize variables that store sensors data
 float turbidityValue = 0;
 float temperatureC = 0;
+
+
+// Define o modo de exibição
+int displayMode = 0;  // 0 = horário, 1 = sensores
+unsigned long lastDisplaySwitch = 0;
+const unsigned long displayInterval = 5000;  // Intervalo para alternar a exibição (em milissegundos)
+
 
 void setup() {
   Serial.begin(115200);
@@ -109,10 +118,10 @@ void setup() {
       Serial.println("Access Point started.");
     }
   }
-
   // Config the RTC clock
   rtc.halt(false);
   rtc.writeProtect(false);
+
 
   // Initialize sensors
   pinMode(turbidityPin, INPUT);
@@ -137,64 +146,105 @@ void loop() {
       flipflop = !flipflop;
     }
     ciclo = 0;
+
     // Obtem a hora atual a partir do RTC
     Time t = rtc.time();
     currentHour = t.hr;
     currentMinute = t.min;
+
+    // Lógica de alimentação
     if (flipflop) {
-
-      //Verifica se e o horário da primeira alimentacao
-      if (currentHour == alimHour1 && currentMinute == alimMinute1 && feeded1 == 0) {
-        feed(500);
-        feeded1 = 1;  //altera status da comida1
-      }
-
-      //Verifica se e o horário da segunda alimentacao
-      if (currentHour == alimHour2 && currentMinute == alimMinute2 && feeded2 == 0) {
-        feed(500);
-        feeded2 = 1;  //altera status da comida2
-      }
-
-      if (currentHour == alimHour3 && currentMinute == alimMinute3 && feeded3 == 0) {
-        feed(500);
-        feeded3 = 1;  //altera status da comida2
-      }
-
-      // Resets the counters on midnight
-      if (currentHour == 0 && currentMinute == 0) {
-        feeded1 = 0;
-        feeded2 = 0;
-        feeded3 = 0;
-      }
-
-      // alimentarPeixe(stepsPerRevolution);
+      // Verifica horários de alimentação
+      verifyFeeding();
     } else {
-      // Run every x seconds
-      if (canSendData) {
-
-        if (millis() - lastMillis >= 1 * 15000UL) {
-          lastMillis = millis();  // get ready for the next iteration
-          // Read turbidity sensor
-          turbidityValue = analogRead(turbidityPin);
-          // Read temperature sensor
-          sensors.requestTemperatures();
-          temperatureC = sensors.getTempCByIndex(0);
-          lcd.clear();
-          lcd.setCursor(0, 0);
-          lcd.print("Turbidez: ");
-          lcd.print(turbidityValue, 0);
-          lcd.setCursor(0, 1);
-          lcd.print("Temp: ");
-          lcd.print(temperatureC);
-          lcd.print(" C");
-          sendSensorsData(turbidityValue, temperatureC);
-        }
-      } else {
-        handleSocketClient();
-      }
+      // Envio de dados MQTT
+      sendDataMqtt();
     }
   }
-}  // end loop
+
+  // Alternar exibição no LCD
+  if (millis() - lastDisplaySwitch >= displayInterval) {
+    lastDisplaySwitch = millis();         // Atualiza o temporizador para a próxima mudança
+    displayMode = (displayMode + 1) % 2;  // Alterna entre 0 e 1
+
+    if (displayMode == 0) {
+      displayHour();  // Exibe o horário atual
+    } else {
+      displaySensorData();  // Exibe os dados dos sensores
+    }
+  }
+}
+
+void verifyFeeding() {
+  // Verifica se é o horário de alimentação e alimenta conforme necessário
+  if (currentHour == alimHour1 && currentMinute == alimMinute1 && feeded1 == 0) {
+    feed(500);
+    feeded1 = 1;
+  }
+
+  if (currentHour == alimHour2 && currentMinute == alimMinute2 && feeded2 == 0) {
+    feed(500);
+    feeded2 = 1;
+  }
+
+  if (currentHour == alimHour3 && currentMinute == alimMinute3 && feeded3 == 0) {
+    feed(500);
+    feeded3 = 1;
+  }
+
+  // Reseta o contador à meia-noite
+  if (currentHour == 0 && currentMinute == 0) {
+    feeded1 = 0;
+    feeded2 = 0;
+    feeded3 = 0;
+  }
+}
+
+void sendDataMqtt() {
+  if (canSendData) {
+    // Atualizar e enviar dados dos sensores a cada 15 min
+    if (millis() - lastMillis >= 900000UL) {
+      lastMillis = millis();
+      turbidityValue = analogRead(turbidityPin);
+      sensors.requestTemperatures();
+      temperatureC = sensors.getTempCByIndex(0);
+      sendSensorsData(turbidityValue, temperatureC);
+    }
+
+    // Enviar dados em tempo real a cada 30 segundos
+    if (millis() - lastMillisRealtime >= 30000UL) {
+      lastMillisRealtime = millis();
+      float turbidity = analogRead(turbidityPin);
+      sensors.requestTemperatures();
+      float temp = sensors.getTempCByIndex(0);
+      sendSensorsDataRealtime(turbidity, temp);
+    }
+  } else {
+    handleSocketClient();
+  }
+}
+
+void displayHour() {
+  // Exibe o horário atual
+  Time t = rtc.time();
+  char horaRelogioStr[32];
+  sprintf(horaRelogioStr, "Hora: %02d:%02d", t.hr, t.min);
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(horaRelogioStr);
+}
+
+void displaySensorData() {
+  // Exibe os dados dos sensores
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Turbidez: ");
+  lcd.print(turbidityValue, 0);
+  lcd.setCursor(0, 1);
+  lcd.print("Temp: ");
+  lcd.print(temperatureC);
+  lcd.print(" C");
+}
 
 // Feed the fish
 void feed(int steps) {
@@ -214,7 +264,6 @@ void feed(int steps) {
   digitalWrite(motorPin4, LOW);
   delay(500);
 }
-
 
 void handleSocketClient() {
   WiFiClient client = server.available();
@@ -244,6 +293,7 @@ void handleSocketClient() {
     }
   }
 }
+
 void processClientMessage(String message) {
   Serial.println("Received message: " + message);
 
@@ -289,36 +339,33 @@ void saveCredentials(const char *ssid, const char *password, const char *uuid) {
     Serial.println("Credentials saved successfully");
   }
 }
-// Read the nvs flash and get the wifi credentials
+// Read the nvs flash and get the alimentation information
 void loadAlimentationTime() {
   char value[64];
   size_t length;
 
-  // Load SSID
   length = sizeof(value);
   esp_err_t err = nvs_get_str(nvs, "1H", value, &length);
   if (err == ESP_OK) {
-    processAlimentationTime(String(value), &alimHour1, &alimMinute1);
+    processAlimentationTime(String(value), &alimHour1, &alimMinute1, 'L');
     Serial.println("H1 loaded: " + String(value));
   } else {
     Serial.printf("Failed to load alimentation time 1 from NVS: %s\n", esp_err_to_name(err));
   }
 
-  // Load password
   length = sizeof(value);
   err = nvs_get_str(nvs, "2H", value, &length);
   if (err == ESP_OK) {
-    processAlimentationTime(String(value), &alimHour2, &alimMinute2);
+    processAlimentationTime(String(value), &alimHour2, &alimMinute2, 'L');
     Serial.println("H2 loaded: " + String(value));
   } else {
     Serial.printf("Failed to load alimentation time 2 from NVS: %s\n", esp_err_to_name(err));
   }
 
-  // Load UUID
   length = sizeof(value);
   err = nvs_get_str(nvs, "3H", value, &length);
   if (err == ESP_OK) {
-    processAlimentationTime(String(value), &alimHour3, &alimMinute3);
+    processAlimentationTime(String(value), &alimHour3, &alimMinute3, 'L');
     Serial.println("H3 loaded: " + String(value));
   } else {
     Serial.printf("Failed to load alimentation time 3 from NVS: %s\n", esp_err_to_name(err));
@@ -400,21 +447,60 @@ void cleanup() {
 
 void sendSensorsData(float turbidity, float temperatureC) {
 
-  snprintf(publish_topic, sizeof(publish_topic), "aqua/devices/%s/sensors", uuid.c_str());
+  snprintf(publish_topic, sizeof(publish_topic), "aqua/devices/%s/sensors/database", uuid.c_str());
 
   char sensorData[64];
   snprintf(sensorData, sizeof(sensorData), "turbidez: %f, temperature: %f", turbidity, temperatureC);
 
   int msg_id = esp_mqtt_client_publish(mqtt_client, publish_topic, sensorData, 0, 2, 0);
 }
+
+void sendSensorsDataRealtime(float turbidity, float temperatureC) {
+
+  snprintf(publish_topic_realtime, sizeof(publish_topic_realtime), "aqua/devices/%s/sensors/realtime", uuid.c_str());
+
+  char sensorData[64];
+  snprintf(sensorData, sizeof(sensorData), "turbidez: %f, temperature: %f", turbidity, temperatureC);
+
+  int msg_id = esp_mqtt_client_publish(mqtt_client, publish_topic_realtime, sensorData, 0, 2, 0);
+}
+
 void processSubscribeData(String data) {
   Serial.printf("Received data: %s\n", data);
   if (data.startsWith("1H")) {
-    processAlimentationTime(data, &alimHour1, &alimMinute1);
+    processAlimentationTime(data, &alimHour1, &alimMinute1, 'I');
   } else if (data.startsWith("2H")) {
-    processAlimentationTime(data, &alimHour2, &alimMinute2);
+    processAlimentationTime(data, &alimHour2, &alimMinute2, 'I');
   } else if (data.startsWith("3H")) {
-    processAlimentationTime(data, &alimHour3, &alimMinute3);
+    processAlimentationTime(data, &alimHour3, &alimMinute3, 'I');
+  } else if (data.startsWith("1H")) {
+    processAlimentationTime(data, &alimHour1, &alimMinute1, 'U');
+  } else if (data.startsWith("2H")) {
+    processAlimentationTime(data, &alimHour2, &alimMinute2, 'U');
+  } else if (data.startsWith("3H")) {
+    processAlimentationTime(data, &alimHour3, &alimMinute3, 'U');
+  } else if (data.startsWith("1H")) {
+    processAlimentationTime(data, &alimHour1, &alimMinute1, 'D');
+  } else if (data.startsWith("2H")) {
+    processAlimentationTime(data, &alimHour2, &alimMinute2, 'D');
+  } else if (data.startsWith("3H")) {
+    processAlimentationTime(data, &alimHour3, &alimMinute3, 'D');
+  } else if (data.startsWith("RESET")) {
+    Serial.println("Resetting all stored data...");
+    esp_err_t err = nvs_erase_all(nvs);  
+    if (err == ESP_OK) {
+      Serial.println("All data erased from NVS");
+      ESP.restart();
+    } else {
+      Serial.printf("Failed to erase all data: %s\n", esp_err_to_name(err));
+    }
+
+    err = nvs_commit(nvs);
+    if (err == ESP_OK) {
+      Serial.println("NVS reset successfully");
+    } else {
+      Serial.printf("Failed to commit NVS reset: %s\n", esp_err_to_name(err));
+    }
   }
 }
 
@@ -459,7 +545,7 @@ void mqtt_app_start(void) {
   esp_mqtt_client_start(mqtt_client);
 }
 
-void processAlimentationTime(String message, int *h, int *min) {
+void processAlimentationTime(String message, int *h, int *min, char op) {
   int hyphenIndex = message.indexOf('-');
   int firstColonIndex = message.indexOf(':');
   String prefix;
@@ -478,10 +564,29 @@ void processAlimentationTime(String message, int *h, int *min) {
     Serial.printf("%s, %s, %s", prefix, hourString, minuteString);
   }
 
-  // Save the alimentation time to nvs
-  err = nvs_set_str(nvs, prefix.c_str(), message.c_str());
-  if (err != ESP_OK) {
-    Serial.printf("Failed to write %s to NVS: %s\n", prefix, esp_err_to_name(err));
-    return;
+  if (op == 'I') {
+    // Save the alimentation time to nvs
+    err = nvs_set_str(nvs, prefix.c_str(), message.c_str());
+    if (err != ESP_OK) {
+      Serial.printf("Failed to write %s to NVS: %s\n", prefix, esp_err_to_name(err));
+      return;
+    } else if (op == 'U') {
+      // Atualizar a chave existente na NVS
+      err = nvs_set_str(nvs, prefix.c_str(), message.c_str());
+      if (err == ESP_OK) {
+        Serial.println("Time updated successfully.");
+      } else {
+        Serial.printf("Failed to update %s in NVS: %s\n", prefix.c_str(), esp_err_to_name(err));
+      }
+    } else if (op == 'D') {
+      // Remover a chave da NVS
+      err = nvs_erase_key(nvs, prefix.c_str());
+      if (err == ESP_OK) {
+        Serial.printf("Deleted key: %s\n", prefix.c_str());
+        nvs_commit(nvs);  // Confirma a exclusão
+      } else {
+        Serial.printf("Failed to delete key %s from NVS: %s\n", prefix.c_str(), esp_err_to_name(err));
+      }
+    }
   }
 }
