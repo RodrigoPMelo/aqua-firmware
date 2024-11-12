@@ -1,0 +1,30 @@
+# Arduino
+*.ino.cpp
+*.elf
+*.hex
+*.bin
+*.eep
+*.elf
+*.map
+*.sym
+*.lss
+*.o
+*.d
+*.a
+*.so
+
+# Arduino logs
+*.log
+
+# Sketchbook subfolders
+/build/
+/libraries/*
+
+# VS Code
+.vscode/
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
