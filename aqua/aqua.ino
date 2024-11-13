@@ -46,10 +46,10 @@ DallasTemperature sensors(&oneWire);
 
 // Stepper Motor
 const int stepsPerRevolution = 500;  // change this to fit the number of steps per revolution for your motor
-const int motorPin1 = 19;            // IN1 on the ULN2003 driver
-const int motorPin2 = 18;            // IN2 on the ULN2003 driver
-const int motorPin3 = 17;            // IN3 on the ULN2003 driver
-const int motorPin4 = 16;            // IN4 on the ULN2003 driver
+const int motorPin1 = 19;             // IN1 on the ULN2003 driver
+const int motorPin2 = 18;             // IN2 on the ULN2003 driver
+const int motorPin3 = 17;             // IN3 on the ULN2003 driver
+const int motorPin4 = 16;             // IN4 on the ULN2003 driver
 Stepper myStepper(stepsPerRevolution, motorPin1, motorPin2, motorPin3, motorPin4);
 
 // LCD Display
@@ -178,17 +178,17 @@ void loop() {
 void verifyFeeding() {
   // Verifica se é o horário de alimentação e alimenta conforme necessário
   if (currentHour == alimHour1 && currentMinute == alimMinute1 && feeded1 == 0) {
-    feed(500);
+    feed(stepsPerRevolution);
     feeded1 = 1;
   }
 
   if (currentHour == alimHour2 && currentMinute == alimMinute2 && feeded2 == 0) {
-    feed(500);
+    feed(stepsPerRevolution);
     feeded2 = 1;
   }
 
   if (currentHour == alimHour3 && currentMinute == alimMinute3 && feeded3 == 0) {
-    feed(500);
+    feed(stepsPerRevolution);
     feeded3 = 1;
   }
 
@@ -202,7 +202,7 @@ void verifyFeeding() {
 
 void sendDataMqtt() {
   if (canSendData) {
-    // Atualizar e enviar dados dos sensores a cada 5 segundos
+    // Atualizar e enviar dados dos sensores a cada 
     if (millis() - lastMillis >= 900000UL) {
       lastMillis = millis();
       float turbidity = analogRead(turbidityPin);
@@ -250,14 +250,8 @@ void displaySensorData() {
 void feed(int steps) {
   delay(1000);
   // Activate the step motor
-  myStepper.step(steps);
-  // Desliga qualquer bobina do motor que possa ter ficado acionada
-  digitalWrite(motorPin1, LOW);
-  digitalWrite(motorPin2, LOW);
-  digitalWrite(motorPin3, LOW);
-  digitalWrite(motorPin4, LOW);
-  delay(500);
   myStepper.step(-steps);
+  // Desliga qualquer bobina do motor que possa ter ficado acionada
   digitalWrite(motorPin1, LOW);
   digitalWrite(motorPin2, LOW);
   digitalWrite(motorPin3, LOW);
@@ -343,34 +337,49 @@ void saveCredentials(const char *ssid, const char *password, const char *uuid) {
 void loadAlimentationTime() {
   char value[64];
   size_t length;
+  esp_err_t err;
 
+  // Função auxiliar para extrair hora e minuto do formato "HH:MM"
+  auto parseTime = [](String timeStr, int &hour, int &minute) {
+    timeStr.trim();
+    int colonIndex = timeStr.indexOf(':');
+    if (colonIndex != -1) {
+      hour = timeStr.substring(0, colonIndex).toInt();
+      minute = timeStr.substring(colonIndex + 1).toInt();
+    }
+  };
+
+  // Carregar horário 1
   length = sizeof(value);
-  esp_err_t err = nvs_get_str(nvs, "1H", value, &length);
+  err = nvs_get_str(nvs, "1H", value, &length);
   if (err == ESP_OK) {
-    processAlimentationTime(String(value), &alimHour1, &alimMinute1, 'L');
     Serial.println("H1 loaded: " + String(value));
+    parseTime(String(value), alimHour1, alimMinute1);
   } else {
     Serial.printf("Failed to load alimentation time 1 from NVS: %s\n", esp_err_to_name(err));
   }
 
+  // Carregar horário 2
   length = sizeof(value);
   err = nvs_get_str(nvs, "2H", value, &length);
   if (err == ESP_OK) {
-    processAlimentationTime(String(value), &alimHour2, &alimMinute2, 'L');
     Serial.println("H2 loaded: " + String(value));
+    parseTime(String(value), alimHour2, alimMinute2);
   } else {
     Serial.printf("Failed to load alimentation time 2 from NVS: %s\n", esp_err_to_name(err));
   }
 
+  // Carregar horário 3
   length = sizeof(value);
   err = nvs_get_str(nvs, "3H", value, &length);
   if (err == ESP_OK) {
-    processAlimentationTime(String(value), &alimHour3, &alimMinute3, 'L');
     Serial.println("H3 loaded: " + String(value));
+    parseTime(String(value), alimHour3, alimMinute3);
   } else {
     Serial.printf("Failed to load alimentation time 3 from NVS: %s\n", esp_err_to_name(err));
   }
 }
+
 
 void loadCredentials(String &ssid, String &password, String &uuid) {
   char value[64];
@@ -467,24 +476,26 @@ void sendSensorsDataRealtime(float turbidity, float temperatureC) {
 
 void processSubscribeData(String data) {
   Serial.printf("Received data: %s\n", data);
-  if (data.startsWith("1H")) {
+  if (data.startsWith("I1H")) {
     processAlimentationTime(data, &alimHour1, &alimMinute1, 'I');
-  } else if (data.startsWith("2H")) {
+  } else if (data.startsWith("I2H")) {
     processAlimentationTime(data, &alimHour2, &alimMinute2, 'I');
-  } else if (data.startsWith("3H")) {
+  } else if (data.startsWith("I3H")) {
     processAlimentationTime(data, &alimHour3, &alimMinute3, 'I');
-  } else if (data.startsWith("1H")) {
+  } else if (data.startsWith("U1H")) {
     processAlimentationTime(data, &alimHour1, &alimMinute1, 'U');
-  } else if (data.startsWith("2H")) {
+  } else if (data.startsWith("U2H")) {
     processAlimentationTime(data, &alimHour2, &alimMinute2, 'U');
-  } else if (data.startsWith("3H")) {
+  } else if (data.startsWith("U3H")) {
     processAlimentationTime(data, &alimHour3, &alimMinute3, 'U');
-  } else if (data.startsWith("1H")) {
+  } else if (data.startsWith("D1H")) {
     processAlimentationTime(data, &alimHour1, &alimMinute1, 'D');
-  } else if (data.startsWith("2H")) {
+  } else if (data.startsWith("D2H")) {
     processAlimentationTime(data, &alimHour2, &alimMinute2, 'D');
-  } else if (data.startsWith("3H")) {
+  } else if (data.startsWith("D3H")) {
     processAlimentationTime(data, &alimHour3, &alimMinute3, 'D');
+  } else if (data.startsWith("FEED")) {
+    feed(500);
   } else if (data.startsWith("RESET")) {
     Serial.println("Resetting all stored data...");
     esp_err_t err = nvs_erase_all(nvs);
@@ -546,47 +557,53 @@ void mqtt_app_start(void) {
 }
 
 void processAlimentationTime(String message, int *h, int *min, char op) {
-  int hyphenIndex = message.indexOf('-');
-  int firstColonIndex = message.indexOf(':');
   String prefix;
   esp_err_t err;
-  // Check if both the hyphen and colons are found
+
+  int hyphenIndex = message.indexOf('-');
+  int firstColonIndex = message.indexOf(':');
+  prefix = message.substring(1, hyphenIndex);
   if (hyphenIndex != -1 && firstColonIndex != -1) {
-    // Extract prefix (the part before the hyphen)
-    prefix = message.substring(0, hyphenIndex);
-    // Extract hour and minute substrings
+    // Extrai as horas e minutos da mensagem
     String hourString = message.substring(hyphenIndex + 1, firstColonIndex);
     String minuteString = message.substring(firstColonIndex + 1);
+    Serial.printf("%s", prefix);
 
-    // Convert substrings to integers and assign to pointers
+    // Converte as strings para inteiros
     *h = hourString.toInt();
     *min = minuteString.toInt();
-    Serial.printf("%s, %s, %s", prefix, hourString, minuteString);
+
+    Serial.printf("Prefix: %s, Hora: %s, Minuto: %s\n", prefix.c_str(), hourString.c_str(), minuteString.c_str());
+  } else {
+    Serial.println("Formato de mensagem inválido!");
+    return;
   }
 
+  // Realiza a operação com base no tipo ('I', 'U' ou 'D')
   if (op == 'I') {
-    // Save the alimentation time to nvs
+    // Inserir na NVS
     err = nvs_set_str(nvs, prefix.c_str(), message.c_str());
-    if (err != ESP_OK) {
-      Serial.printf("Failed to write %s to NVS: %s\n", prefix, esp_err_to_name(err));
-      return;
-    } else if (op == 'U') {
-      // Atualizar a chave existente na NVS
-      err = nvs_set_str(nvs, prefix.c_str(), message.c_str());
-      if (err == ESP_OK) {
-        Serial.println("Time updated successfully.");
-      } else {
-        Serial.printf("Failed to update %s in NVS: %s\n", prefix.c_str(), esp_err_to_name(err));
-      }
-    } else if (op == 'D') {
-      // Remover a chave da NVS
-      err = nvs_erase_key(nvs, prefix.c_str());
-      if (err == ESP_OK) {
-        Serial.printf("Deleted key: %s\n", prefix.c_str());
-        nvs_commit(nvs);  // Confirma a exclusão
-      } else {
-        Serial.printf("Failed to delete key %s from NVS: %s\n", prefix.c_str(), esp_err_to_name(err));
-      }
+    if (err == ESP_OK) {
+      Serial.println("Horário salvo com sucesso.");
+    } else {
+      Serial.printf("Falha ao salvar %s na NVS: %s\n", prefix.c_str(), esp_err_to_name(err));
+    }
+  } else if (op == 'U') {
+    // Atualizar na NVS
+    err = nvs_set_str(nvs, prefix.c_str(), message.c_str());
+    if (err == ESP_OK) {
+      Serial.println("Horário atualizado com sucesso.");
+    } else {
+      Serial.printf("Falha ao atualizar %s na NVS: %s\n", prefix.c_str(), esp_err_to_name(err));
+    }
+  } else if (op == 'D') {
+    // Deletar da NVS
+    err = nvs_erase_key(nvs, prefix.c_str());
+    if (err == ESP_OK) {
+      Serial.printf("Horário deletado: %s\n", prefix.c_str());
+      nvs_commit(nvs);
+    } else {
+      Serial.printf("Falha ao deletar %s da NVS: %s\n", prefix.c_str(), esp_err_to_name(err));
     }
   }
 }
